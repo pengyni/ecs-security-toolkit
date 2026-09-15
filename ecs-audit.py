@@ -429,6 +429,12 @@ def scan_url(base: str, report: AuditReport) -> None:
             f"{base}/botapi/migrate-alltypes?url=https://example.com",
         ),
         (
+            "bot-coinflip-exposed",
+            "high",
+            "Bot coinflip / currency route reachable",
+            f"{base}/botapi/discord/coinflip",
+        ),
+        (
             "debug-integration-account",
             "critical",
             "DEBUG integration account route exposed",
@@ -439,6 +445,12 @@ def scan_url(base: str, report: AuditReport) -> None:
             "critical",
             "DEBUG join script generator exposed",
             f"{base}/game/get-join-script-debug?placeId=1",
+        ),
+        (
+            "get-join-script",
+            "high",
+            "Join script endpoint reachable",
+            f"{base}/game/get-join-script?placeId=1",
         ),
         (
             "allowed-security-keys",
@@ -452,6 +464,18 @@ def scan_url(base: str, report: AuditReport) -> None:
             "Marketplace purchase endpoint exists (POST not attempted)",
             f"{base}/marketplace/purchase",
         ),
+        (
+            "builders-club-membership",
+            "high",
+            "Builders Club membership endpoint reachable",
+            f"{base}/buildersclub/membership",
+        ),
+        (
+            "quiet-get-settings",
+            "high",
+            "QuietGet-style settings endpoint reachable",
+            f"{base}/Setting/QuietGet/1.json",
+        ),
     ]
 
     for fid, severity, title, url in probes:
@@ -462,13 +486,13 @@ def scan_url(base: str, report: AuditReport) -> None:
                     id=f"remote-unreachable-{fid}",
                     severity="info",
                     title=f"Could not reach: {title}",
-                    detail="Host down, blocked, or TLS error.",
+                    detail="Host down, blocked, or TLS error during read-only probe.",
                     evidence=url,
                 )
             )
             continue
 
-        body_s = body.decode("utf-8", errors="ignore")[:500]
+        body_s = body.decode("utf-8", errors="ignore")[:800]
         if fid == "negotiate-cookie-plant":
             if "set-cookie" in headers and "roblosecurity" in headers.get("set-cookie", "").lower():
                 report.add(
@@ -476,9 +500,11 @@ def scan_url(base: str, report: AuditReport) -> None:
                         id="remote-negotiate-set-cookie",
                         severity="critical",
                         title=title,
-                        detail="Server set .ROBLOSECURITY from query suggest= (session planting).",
-                        evidence=f"HTTP {status}; Set-Cookie present",
-                        remediation="Remove or harden negotiate.ashx; do not accept arbitrary suggest tokens.",
+                        detail=(
+                            "Server set .ROBLOSECURITY from the suggest= query on negotiate.ashx. "
+                            "That is live session planting: whatever token is in the URL becomes the browser session cookie."
+                        ),
+                        evidence=f"HTTP {status}; Set-Cookie present for .ROBLOSECURITY",
                     )
                 )
             elif status == 200:
@@ -487,7 +513,10 @@ def scan_url(base: str, report: AuditReport) -> None:
                         id="remote-negotiate-200",
                         severity="high",
                         title="negotiate.ashx returns 200",
-                        detail="Review whether suggest parameter can plant sessions.",
+                        detail=(
+                            "Login negotiate is live and returned 200. On ECS forks this path usually still accepts "
+                            "suggest= under some clients even when this probe did not observe Set-Cookie."
+                        ),
                         evidence=f"HTTP {status}",
                     )
                 )
@@ -499,19 +528,38 @@ def scan_url(base: str, report: AuditReport) -> None:
                         id="remote-bot-reset-unauth",
                         severity="critical",
                         title="Unauthenticated bot password reset may work",
-                        detail="Response looks like a successful reset (audit did not use any secret).",
-                        evidence=f"HTTP {status}; body snippet logged in json only",
-                        remediation="Disable route or require strong bot auth; never return password in JSON.",
+                        detail=(
+                            "botapi/resetpassword answered like a successful reset and/or password return "
+                            "without this scanner supplying a bot secret. On Bubbablox-family code that means "
+                            "arbitrary userId password resets with the new password in JSON."
+                        ),
+                        evidence=f"HTTP {status}",
                     )
                 )
-            elif status in (401, 403, 500):
+            elif status in (401, 403):
                 report.add(
                     Finding(
                         id="remote-bot-reset-blocked",
                         severity="info",
-                        title="Bot reset route blocked or errored (good)",
-                        detail=f"HTTP {status}",
+                        title="Bot reset route present but blocked for anonymous probe",
+                        detail=(
+                            f"HTTP {status}. Route exists. On many hosts BotAuthorization is still the public "
+                            "leak default, so a blocked anonymous probe does not mean the reset oracle is gone."
+                        ),
                         evidence=url,
+                    )
+                )
+            elif status == 200:
+                report.add(
+                    Finding(
+                        id="remote-bot-reset-200",
+                        severity="high",
+                        title="Bot password reset returned HTTP 200",
+                        detail=(
+                            "Reset route is live. Even without an obvious password field in this snippet, "
+                            "ECS bot reset handlers commonly mutate credentials for the given userId."
+                        ),
+                        evidence=f"HTTP {status}",
                     )
                 )
 
@@ -522,9 +570,21 @@ def scan_url(base: str, report: AuditReport) -> None:
                         id="remote-debug-account-factory",
                         severity="critical",
                         title="DEBUG account factory is live",
-                        detail="Public account+cookie creation endpoint responded success.",
+                        detail=(
+                            "Public DEBUG helper created an account and/or session cookie. "
+                            "This is an account vending machine left over from development builds."
+                        ),
                         evidence=url,
-                        remediation="Never deploy DEBUG builds; remove integration-test routes.",
+                    )
+                )
+            elif status == 200:
+                report.add(
+                    Finding(
+                        id="remote-debug-account-200",
+                        severity="high",
+                        title="DEBUG integration account route returned 200",
+                        detail="integration-test account helper is reachable on the public host.",
+                        evidence=f"HTTP {status}",
                     )
                 )
 
@@ -535,9 +595,36 @@ def scan_url(base: str, report: AuditReport) -> None:
                         id="remote-debug-join-ticket",
                         severity="critical",
                         title="DEBUG join ticket minting is live",
-                        detail="Endpoint returned ticket material.",
+                        detail=(
+                            "Debug join generator returned ticket material. On ECS, tickets often embed "
+                            "session JWTs or authenticationTicket values reusable as site logins."
+                        ),
                         evidence=url,
-                        remediation="Disable DEBUG routes in production.",
+                    )
+                )
+            elif status == 200:
+                report.add(
+                    Finding(
+                        id="remote-debug-join-200",
+                        severity="high",
+                        title="DEBUG join script endpoint returned 200",
+                        detail="Debug join helper is publicly reachable.",
+                        evidence=f"HTTP {status}",
+                    )
+                )
+
+        elif fid == "get-join-script":
+            if status == 200 and ("ticket" in body_s.lower() or "placeLauncher" in body_s or "authentication" in body_s.lower()):
+                report.add(
+                    Finding(
+                        id="remote-join-script-ticket",
+                        severity="high",
+                        title="Join script endpoint returns launcher/ticket material",
+                        detail=(
+                            "Non-debug join script answered with ticket or launcher fields. "
+                            "If those fields include session material, anyone who can hit the URL can steal accounts."
+                        ),
+                        evidence=f"HTTP {status}",
                     )
                 )
 
@@ -548,7 +635,10 @@ def scan_url(base: str, report: AuditReport) -> None:
                         id="remote-security-keys-true",
                         severity="high",
                         title="GetAllowedSecurityKeys allows all clients",
-                        detail="Client integrity check appears disabled.",
+                        detail=(
+                            "Client integrity gate returned unrestricted/true. Modified clients and executors "
+                            "are not rejected at this HTTP check."
+                        ),
                         evidence=body_s[:120],
                     )
                 )
@@ -559,8 +649,67 @@ def scan_url(base: str, report: AuditReport) -> None:
                     id="remote-bot-migrate-200",
                     severity="high",
                     title="Bot migrate returned HTTP 200",
-                    detail="May indicate weak bot auth or DEBUG build.",
+                    detail=(
+                        "migrate-alltypes is live. This family of routes fetches attacker-chosen URLs into the "
+                        "asset pipeline (SSRF + content injection) when bot auth is weak or DEBUG."
+                    ),
                     evidence=url,
+                )
+            )
+
+        elif fid == "bot-coinflip-exposed" and status in (200, 400, 401, 403, 405):
+            report.add(
+                Finding(
+                    id="remote-bot-coinflip-present",
+                    severity="high" if status == 200 else "medium",
+                    title="Bot coinflip / currency route is present",
+                    detail=(
+                        f"HTTP {status}. Discord coinflip bot routes on ECS forks mint or spend robux for a "
+                        "discord id when BotAuthorization is known or bypassed."
+                    ),
+                    evidence=url,
+                )
+            )
+
+        elif fid == "marketplace-purchase-options" and status not in (404, 0):
+            report.add(
+                Finding(
+                    id="remote-marketplace-present",
+                    severity="medium" if status in (401, 403, 405) else "info",
+                    title="Marketplace purchase endpoint is reachable",
+                    detail=(
+                        f"HTTP {status}. Purchase surface exists. On many forks this route is CSRF-exempt and "
+                        "becomes forced-buy / economy griefing against logged-in players."
+                    ),
+                    evidence=url,
+                )
+            )
+
+        elif fid == "builders-club-membership" and status not in (404, 0):
+            report.add(
+                Finding(
+                    id="remote-buildersclub-present",
+                    severity="high" if status == 200 else "medium",
+                    title="Builders Club membership endpoint is reachable",
+                    detail=(
+                        f"HTTP {status}. Membership grant routes on ECS forks are often CSRF-bypassed and "
+                        "sometimes skip payment checks, so attackers self-grant paid tiers."
+                    ),
+                    evidence=url,
+                )
+            )
+
+        elif fid == "quiet-get-settings" and status == 200 and body_s.strip():
+            report.add(
+                Finding(
+                    id="remote-quietget-200",
+                    severity="high",
+                    title="QuietGet-style settings endpoint returned data",
+                    detail=(
+                        "Settings QuietGet answered with a body. Original ECS QuietGet without an allow-list "
+                        "could be steered into reading sensitive JSON paths."
+                    ),
+                    evidence=f"HTTP {status}; body length {len(body_s)}",
                 )
             )
 
@@ -573,7 +722,10 @@ def scan_url(base: str, report: AuditReport) -> None:
                     id="remote-maybe-not-ecs",
                     severity="info",
                     title="Site may not be an Economy Simulator / ECS revival",
-                    detail="Homepage did not match common ECS markers. Probes still ran; results may be mostly informational.",
+                    detail=(
+                        "Homepage did not match common ECS markers. Probes still ran. "
+                        "Critical hits below should still be treated seriously on restyled forks."
+                    ),
                     evidence=base,
                 )
             )
@@ -583,7 +735,10 @@ def scan_url(base: str, report: AuditReport) -> None:
                     id="remote-hcaptcha-test-key",
                     severity="medium",
                     title="hCaptcha test sitekey in HTML",
-                    detail="Bots can pass captcha with public test keys.",
+                    detail=(
+                        "Public hCaptcha test sitekey is embedded. Automation always passes, so register/login "
+                        "and other gated forms are bot-open."
+                    ),
                     evidence="homepage HTML",
                 )
             )
@@ -593,7 +748,37 @@ def scan_url(base: str, report: AuditReport) -> None:
                     id="remote-webhook-in-html",
                     severity="critical",
                     title="Discord webhook in public HTML",
-                    detail="Client bundle or page leaks a webhook URL.",
+                    detail=(
+                        "A Discord webhook URL is visible to anyone who loads the page or JS bundle. "
+                        "That secret can be spammed or used to spoof the host's alert channel."
+                    ),
+                    evidence="homepage HTML",
+                )
+            )
+        lower = home_s.lower()
+        if "hello world" in lower or "yourverysecuresessionskey" in lower:
+            report.add(
+                Finding(
+                    id="remote-weak-secret-echo",
+                    severity="critical",
+                    title="Leak-style secret placeholder appears in public HTML",
+                    detail=(
+                        "Homepage/JS echoes a known weak secret placeholder pattern from ECS examples. "
+                        "If the real session key matches, cookies can be forged for any user id."
+                    ),
+                    evidence="homepage HTML",
+                )
+            )
+        if "/_next/" in home_s or "2016-roblox" in lower or "roblox-client" in lower:
+            report.add(
+                Finding(
+                    id="remote-ecs-frontend-fingerprint",
+                    severity="info",
+                    title="2016 / Next ECS-style frontend fingerprint",
+                    detail=(
+                        "Frontend shape matches the usual 2016-roblox-main / Next ECS client tree. "
+                        "Expect negotiate, join tickets, and example csrfKey issues unless the host heavily rebuilt auth."
+                    ),
                     evidence="homepage HTML",
                 )
             )
