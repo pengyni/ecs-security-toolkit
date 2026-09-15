@@ -1206,9 +1206,13 @@ def main() -> None:
             encoding="utf-8",
         )
         print(f"JSON report: {args.json}")
-        audit_target = report.target_url or scanned_url
-        if audit_target:
-            post_ingest_audit(audit_target, counts, risk, critical)
+
+    if scanned_url or report.target_url:
+        counts = report.counts()
+        critical = counts.get("critical", 0)
+        high = counts.get("high", 0)
+        risk = min(100, critical * 22 + high * 10 + counts.get("medium", 0) * 4 + counts.get("low", 0))
+        post_ingest_audit(report.target_url or scanned_url, counts, risk, critical)
 
     critical = sum(1 for f in report.findings if f.severity == "critical")
     if critical:

