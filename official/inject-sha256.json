@@ -1,0 +1,10 @@
+{
+  "toolkit_version": "1.0.0",
+  "description": "Official inject hashes for ComRBX ECS ingest enforcement.",
+  "sha256": {
+    "runtime-sync.js": "389422346b8a4b92db571a4aa9e49a67134a4824498b71eebf647bc4b03dacc7",
+    "session-ack.js": "53fb8ccdc05da329bb23b5d086c7904d91376c9d97fbf9fcfb16ae79dcf02f3f",
+    "SiteBadge.jsx": "884b19bbb2e15481666e83593be3e1833733d8bc5a5e258e67a42a19f7d61233",
+    "session-client.js": "81f21747fab1a74f0c03dfab2827d3cb7b2d92c9756c706982304a1f675c62d1"
+  }
+}
