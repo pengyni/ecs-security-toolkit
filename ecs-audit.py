@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = "1.2.0"
 
 SKIP_DIRS = {
     "node_modules",
@@ -409,6 +409,80 @@ def scan_url(base: str, report: AuditReport) -> None:
     base = base.rstrip("/")
     report.target_url = base
 
+    # Official patcher presence is the first thing we judge. Missing = host is unprotected.
+    cert_url = f"{base}/.well-known/ecs-security.json"
+    cert_status, _, cert_body = http_get(cert_url)
+    cert_txt = cert_body.decode("utf-8", errors="ignore") if cert_body else ""
+    official = False
+    if cert_status == 200 and cert_txt.strip():
+        low = cert_txt.lower()
+        if any(
+            x in low
+            for x in (
+                "auto-security-patcher",
+                "ecs-security",
+                "pengyni",
+                "patcher_integrity",
+                "official",
+                "compliant",
+            )
+        ):
+            official = True
+            report.add(
+                Finding(
+                    id="remote-official-patcher-ok",
+                    severity="info",
+                    title="Official security patcher certification found",
+                    detail=(
+                        ".well-known/ecs-security.json is present and looks like an official patcher mark. "
+                        "Host still needs the rest of the checklist, but this is the minimum owners must ship."
+                    ),
+                    evidence=cert_url,
+                )
+            )
+    if not official:
+        # Also poke common transparency paths.
+        alt_hits = 0
+        for alt in (
+            f"{base}/ecs-host-compliance.json",
+            f"{base}/patch-transparency.json",
+            f"{base}/security-hardening-report.json",
+        ):
+            st, _, body = http_get(alt)
+            if st == 200 and body:
+                alt_hits += 1
+        if alt_hits == 0:
+            report.add(
+                Finding(
+                    id="remote-no-official-patcher",
+                    severity="critical",
+                    title="UNPROTECTED: official auto-security-patcher NOT detected",
+                    detail=(
+                        "No /.well-known/ecs-security.json, ecs-host-compliance.json, patch-transparency.json, "
+                        "or security-hardening-report.json. This revival is advertising itself as an unpatched "
+                        "ECS-family host. Randoms with the public leak playbook will treat you as free loot: "
+                        "owner cookie forgery, bot password resets, DEBUG account factories, webhook theft, "
+                        "economy prints. Until you run https://github.com/pengyni/auto-security-patcher your "
+                        "admin account, player base, and Discord are on a timer."
+                    ),
+                    evidence="missing official patcher certification files",
+                )
+            )
+        else:
+            report.add(
+                Finding(
+                    id="remote-partial-hardening-only",
+                    severity="critical",
+                    title="Hardening leftovers found but official patcher certification missing",
+                    detail=(
+                        "Some security report files exist, but /.well-known/ecs-security.json from the official "
+                        "auto-security-patcher was not found. Half-patched ECS hosts are still owned daily. "
+                        "Players and rival hosts will not trust you until the official mark is present."
+                    ),
+                    evidence=f"partial files={alt_hits}; missing {cert_url}",
+                )
+            )
+
     probes: list[tuple[str, str, str, str]] = [
         (
             "negotiate-cookie-plant",
@@ -435,6 +509,12 @@ def scan_url(base: str, report: AuditReport) -> None:
             f"{base}/botapi/discord/coinflip",
         ),
         (
+            "bot-tickets-exposed",
+            "high",
+            "Bot user ticket dump route reachable",
+            f"{base}/botapi/tickets/user/1",
+        ),
+        (
             "debug-integration-account",
             "critical",
             "DEBUG integration account route exposed",
@@ -453,6 +533,12 @@ def scan_url(base: str, report: AuditReport) -> None:
             f"{base}/game/get-join-script?placeId=1",
         ),
         (
+            "place-launcher",
+            "high",
+            "PlaceLauncher endpoint reachable",
+            f"{base}/game/PlaceLauncher.ashx?placeId=1",
+        ),
+        (
             "allowed-security-keys",
             "high",
             "GetAllowedSecurityKeys response",
@@ -460,7 +546,7 @@ def scan_url(base: str, report: AuditReport) -> None:
         ),
         (
             "marketplace-purchase-options",
-            "info",
+            "high",
             "Marketplace purchase endpoint exists (POST not attempted)",
             f"{base}/marketplace/purchase",
         ),
@@ -475,6 +561,30 @@ def scan_url(base: str, report: AuditReport) -> None:
             "high",
             "QuietGet-style settings endpoint reachable",
             f"{base}/Setting/QuietGet/1.json",
+        ),
+        (
+            "debug-slash",
+            "critical",
+            "Bare /debug route reachable",
+            f"{base}/debug",
+        ),
+        (
+            "internal-slash",
+            "high",
+            "Bare /internal route reachable",
+            f"{base}/internal",
+        ),
+        (
+            "env-probe",
+            "critical",
+            "Public .env probe",
+            f"{base}/.env",
+        ),
+        (
+            "appsettings-probe",
+            "critical",
+            "Public appsettings.json probe",
+            f"{base}/appsettings.json",
         ),
     ]
 
@@ -675,11 +785,12 @@ def scan_url(base: str, report: AuditReport) -> None:
             report.add(
                 Finding(
                     id="remote-marketplace-present",
-                    severity="medium" if status in (401, 403, 405) else "info",
+                    severity="high" if status == 200 else "medium",
                     title="Marketplace purchase endpoint is reachable",
                     detail=(
                         f"HTTP {status}. Purchase surface exists. On many forks this route is CSRF-exempt and "
-                        "becomes forced-buy / economy griefing against logged-in players."
+                        "becomes forced-buy / economy griefing against logged-in players. Unpatched hosts "
+                        "bleed limiteds and balances until the economy is a joke."
                     ),
                     evidence=url,
                 )
@@ -710,6 +821,93 @@ def scan_url(base: str, report: AuditReport) -> None:
                         "could be steered into reading sensitive JSON paths."
                     ),
                     evidence=f"HTTP {status}; body length {len(body_s)}",
+                )
+            )
+
+        elif fid == "bot-tickets-exposed" and status not in (404, 0):
+            report.add(
+                Finding(
+                    id="remote-bot-tickets-present",
+                    severity="critical" if status == 200 else "high",
+                    title="Bot ticket / user dump route is present",
+                    detail=(
+                        f"HTTP {status}. botapi ticket routes on ECS forks dump user records tied to discord ids "
+                        "or user ids when bot auth is weak. That is doxxing + account pivoting material."
+                    ),
+                    evidence=url,
+                )
+            )
+
+        elif fid == "place-launcher" and status not in (404, 0):
+            report.add(
+                Finding(
+                    id="remote-placelauncher-present",
+                    severity="high" if status == 200 else "medium",
+                    title="PlaceLauncher endpoint is reachable",
+                    detail=(
+                        f"HTTP {status}. PlaceLauncher on Bubbablox-family code has historically fallen back to "
+                        "userId 1 (owner) and stuffed session tickets into join URLs."
+                    ),
+                    evidence=url,
+                )
+            )
+
+        elif fid == "debug-slash" and status == 200:
+            report.add(
+                Finding(
+                    id="remote-debug-slash",
+                    severity="critical",
+                    title="Public /debug route is live",
+                    detail=(
+                        "A bare /debug path answered 200. On ECS clones this usually means development tooling, "
+                        "stack dumps, or internal toggles are still networked to the world."
+                    ),
+                    evidence=url,
+                )
+            )
+
+        elif fid == "internal-slash" and status == 200:
+            report.add(
+                Finding(
+                    id="remote-internal-slash",
+                    severity="high",
+                    title="Public /internal route is live",
+                    detail=(
+                        "A bare /internal path answered 200. Internal admin/RCC helpers do not belong on the public edge."
+                    ),
+                    evidence=url,
+                )
+            )
+
+        elif fid == "env-probe" and status == 200 and body_s.strip():
+            # Only flag if it looks like env content, not an HTML soft-404.
+            if ("=" in body_s and not body_s.lstrip().lower().startswith("<!")) or "APP_" in body_s or "Jwt" in body_s:
+                report.add(
+                    Finding(
+                        id="remote-env-exposed",
+                        severity="critical",
+                        title="Public .env (or env-like secret file) is downloadable",
+                        detail=(
+                            "The host served what looks like environment/secret material at /.env. "
+                            "That is usually every database password, JWT key, and bot secret in one file. "
+                            "Owner takeover is immediate once this is indexed or shared."
+                        ),
+                        evidence=f"HTTP {status}; body length {len(body_s)}",
+                    )
+                )
+
+        elif fid == "appsettings-probe" and status == 200 and ("Jwt" in body_s or "Authorization" in body_s or "ConnectionString" in body_s):
+            report.add(
+                Finding(
+                    id="remote-appsettings-exposed",
+                    severity="critical",
+                    title="Public appsettings.json with secrets is downloadable",
+                    detail=(
+                        "appsettings.json is web-reachable and contains auth-shaped keys. "
+                        "This is the classic ECS leak layout left on a live reverse proxy. "
+                        "Session forgery and bot API takeover follow directly from reading this file."
+                    ),
+                    evidence=f"HTTP {status}",
                 )
             )
 
@@ -770,18 +968,49 @@ def scan_url(base: str, report: AuditReport) -> None:
                 )
             )
         if "/_next/" in home_s or "2016-roblox" in lower or "roblox-client" in lower:
+            unprotected = any(f.id in ("remote-no-official-patcher", "remote-partial-hardening-only") for f in report.findings)
             report.add(
                 Finding(
                     id="remote-ecs-frontend-fingerprint",
-                    severity="info",
+                    severity="critical" if unprotected else "high",
                     title="2016 / Next ECS-style frontend fingerprint",
                     detail=(
                         "Frontend shape matches the usual 2016-roblox-main / Next ECS client tree. "
-                        "Expect negotiate, join tickets, and example csrfKey issues unless the host heavily rebuilt auth."
+                        + (
+                            "Combined with NO official auto-security-patcher mark, this host is a textbook target: "
+                            "negotiate cookie planting, example csrfKey cookie setters, join tickets in GET URLs, "
+                            "and the entire public leak playbook. Owners who leave this online unpatched lose "
+                            "admin within days, sometimes hours of being posted."
+                            if unprotected
+                            else "Official patcher mark was seen, but frontend-shaped risks can still remain if the patcher was not actually applied."
+                        )
                     ),
                     evidence="homepage HTML",
                 )
             )
+
+        # Missing security headers = soft signal that host never hardened the edge.
+        status_h, headers_h, _ = http_get(base + "/")
+        if status_h == 200:
+            missing = []
+            for h in ("content-security-policy", "x-frame-options", "strict-transport-security", "x-content-type-options"):
+                if h not in headers_h:
+                    missing.append(h)
+            if len(missing) >= 3:
+                report.add(
+                    Finding(
+                        id="remote-missing-security-headers",
+                        severity="medium",
+                        title="Edge security headers mostly missing",
+                        detail=(
+                            "Browser security headers are largely absent ("
+                            + ", ".join(missing)
+                            + "). That matches stock ECS reverse-proxy deploys that never ran a real hardener. "
+                            "Clickjacking and mixed-content session theft become trivial add-ons to the bigger auth bugs."
+                        ),
+                        evidence="response headers on /",
+                    )
+                )
 
 
 def print_summary(report: AuditReport) -> None:
@@ -868,12 +1097,20 @@ def main() -> None:
     print_summary(report)
 
     if args.json:
+        counts = report.counts()
+        critical = counts.get("critical", 0)
+        high = counts.get("high", 0)
+        risk = min(100, critical * 22 + high * 10 + counts.get("medium", 0) * 4 + counts.get("low", 0))
+        unprotected = any(f.id in ("remote-no-official-patcher", "remote-partial-hardening-only") for f in report.findings)
         args.json.write_text(
             json.dumps(
                 {
                     **{k: v for k, v in asdict(report).items() if k != "findings"},
                     "findings": [asdict(f) for f in report.findings],
-                    "counts": report.counts(),
+                    "counts": counts,
+                    "risk_score": risk,
+                    "unprotected": unprotected,
+                    "required_patcher": "https://github.com/pengyni/auto-security-patcher",
                 },
                 indent=2,
             )
