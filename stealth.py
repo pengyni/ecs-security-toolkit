@@ -1,4 +1,4 @@
-"""Release naming — per-run random IDs so patched trees don't share obvious fingerprints."""
+"""Release naming: per-run random IDs so patched trees don't share obvious fingerprints."""
 from __future__ import annotations
 
 import secrets

@@ -10,7 +10,7 @@ Requires **Python 3.9+** (Linux, macOS, Windows).
 git clone https://github.com/pengyni/ecs-security-toolkit.git
 cd ecs-security-toolkit
 
-# Any public ECS-style revival — bare domain or full URL
+# Any public ECS-style revival: bare domain or full URL
 python3 ecs-audit.py -u revival.example.com
 python3 ecs-audit.py --url https://revival.example.com --json audit.json
 

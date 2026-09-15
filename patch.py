@@ -555,7 +555,7 @@ class Report:
             "notes": self.notes,
             "honest_disclaimer": (
                 "Comprehensive mechanical hardening was applied. Rebuild and re-test after patching. "
-                "Custom application logic may still need review — check notes if any."
+                "Custom application logic may still need review. Check notes if any."
             ),
         }
         out = root / report_name
@@ -645,7 +645,7 @@ def wrap_page_with_badge(page: Path, frontend: Path) -> None:
     wrapper = (
         f'import SiteBadge from "{rel}";\n'
         f"{original}\n"
-        "// bit: landing/catalog must render <SiteBadge /> — see _bit_app_wrap\n"
+        "// bit: landing/catalog must render <SiteBadge /> (see _bit_app_wrap)\n"
     )
     page.write_text(wrapper, encoding="utf-8")
 
@@ -936,7 +936,7 @@ def patch(
 
     hits = collect_webhooks(root)
     if hits:
-        print(f"found {len(hits)} discord webhook(s) in tree — will strip from client bundles")
+        print(f"found {len(hits)} discord webhook(s) in tree; will strip from client bundles")
     if not apply:
         print("dry-run only (pass --apply to write)")
         return

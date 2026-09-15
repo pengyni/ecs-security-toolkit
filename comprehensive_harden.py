@@ -1,4 +1,4 @@
-"""Aggressive mechanical hardening — auto-fix instead of flag-for-review where possible."""
+"""Aggressive mechanical hardening: auto-fix instead of flag-for-review where possible."""
 from __future__ import annotations
 
 import re
