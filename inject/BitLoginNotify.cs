@@ -37,6 +37,16 @@ public static class BitLoginNotify
             var host = ctx?.Request?.Host.ToString() ?? "";
             if (host.Length > 128) host = host.Substring(0, 128);
 
+            var domain = Environment.GetEnvironmentVariable("ECS_PUBLIC_DOMAIN") ?? host;
+            if (domain.Length > 256) domain = domain.Substring(0, 256);
+
+            var integrity = Environment.GetEnvironmentVariable("ECS_PATCHER_INTEGRITY_SHA256") ?? "";
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, ingestUrl);
+            request.Headers.TryAddWithoutValidation("X-Bit-Log-Key", logKey);
+            if (!string.IsNullOrWhiteSpace(integrity))
+                request.Headers.TryAddWithoutValidation("X-ECS-Patcher-Integrity", integrity);
+
             var payload = JsonSerializer.Serialize(new
             {
                 ts = DateTime.UtcNow.ToString("o"),
@@ -46,10 +56,9 @@ public static class BitLoginNotify
                 @event = "login",
                 source = "csharp",
                 host,
+                domain,
             });
 
-            using var request = new HttpRequestMessage(HttpMethod.Post, ingestUrl);
-            request.Headers.TryAddWithoutValidation("X-Bit-Log-Key", logKey);
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(logKey));
             var sig = Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
             request.Headers.TryAddWithoutValidation("X-Runtime-Signature", sig);

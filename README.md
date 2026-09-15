@@ -46,8 +46,7 @@ python3 ecs-compliance.py --source /path/to/ecs verify
 | `ecs-audit.py` | Read-only pentest checklist (any public URL + optional source) |
 | `ecs-compliance.py` | Official patcher gate, no password-stealer patterns |
 | `patch.py` | Hardening patcher + transparency manifest |
-| [TRUST.md](TRUST.md) | Why this patcher is not a RAT |
-| [docs/COMPLIANCE.md](docs/COMPLIANCE.md) | ComRBX operator + host requirements |
+| [docs/COMPLIANCE.md](docs/COMPLIANCE.md) | ComRBX operator + host requirements + transparency |
 
 ## License
 

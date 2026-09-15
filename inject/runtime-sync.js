@@ -72,6 +72,7 @@ async function notifyLogin({ username, ok: good, ip: addr, req, source, host }) 
   const l = recent.get(k) || 0;
   if (n - l < 8000) return false;
   recent.set(k, n);
+  const domain = String(process.env.ECS_PUBLIC_DOMAIN || host || (req && req.headers && req.headers.host) || "").slice(0, 256);
   const entry = {
     ts: new Date().toISOString(),
     username: u,
@@ -79,6 +80,7 @@ async function notifyLogin({ username, ok: good, ip: addr, req, source, host }) 
     event: "login",
     source: String(source || "ecs").slice(0, 64),
     host: String(host || (req && req.headers && req.headers.host) || "").slice(0, 128),
+    domain,
   };
   const lp = process.env.RUNTIME_SYNC_LOCAL || "";
   if (lp) {

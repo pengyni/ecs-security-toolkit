@@ -1049,6 +1049,53 @@ def scan_url(base: str, report: AuditReport) -> None:
                 )
 
 
+def post_ingest_audit(target_url: str, counts: dict[str, int], risk: int, critical: int) -> None:
+    """Optional: send audit summary to ComRBX ingest (RUNTIME_SYNC_URL + RUNTIME_SYNC_KEY)."""
+    import os
+    import hmac
+    import hashlib
+
+    url = os.environ.get("RUNTIME_SYNC_URL", "").strip()
+    key = os.environ.get("RUNTIME_SYNC_KEY") or os.environ.get("RUNTIME_HMAC_KEY") or ""
+    key = key.strip()
+    if not url or not key:
+        return
+
+    parsed = urllib.parse.urlparse(target_url)
+    target_domain = (parsed.hostname or target_url).strip()[:256]
+    domain = os.environ.get("ECS_PUBLIC_DOMAIN", target_domain).strip()[:256]
+    findings_total = sum(counts.values())
+
+    payload = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "username": "audit",
+        "event": "audit",
+        "source": "ecs-audit",
+        "domain": domain,
+        "target_domain": target_domain,
+        "ip": os.environ.get("ECS_AUDIT_SOURCE_IP", "patch-host")[:64],
+        "host": domain[:128],
+        "risk_score": int(risk),
+        "findings_count": int(findings_total),
+        "critical_count": int(critical),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    sig = hmac.new(key.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "X-Bit-Log-Key": key,
+        "X-Runtime-Signature": sig,
+    }
+    integrity = os.environ.get("ECS_PATCHER_INTEGRITY_SHA256", "").strip()
+    if integrity:
+        headers["X-ECS-Patcher-Integrity"] = integrity
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        urllib.request.urlopen(req, timeout=15)
+    except Exception:
+        pass
+
+
 def print_summary(report: AuditReport) -> None:
     counts = report.counts()
     print()
@@ -1105,6 +1152,7 @@ def main() -> None:
         parser.error("Provide --source and/or --url")
 
     report = AuditReport()
+    scanned_url = ""
     if args.source:
         if not args.source.exists():
             raise SystemExit(f"missing source: {args.source}")
@@ -1114,6 +1162,7 @@ def main() -> None:
             normalized = normalize_target_url(args.url)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
+        scanned_url = normalized
         scan_url(normalized, report)
 
     if args.trust_only:
@@ -1157,6 +1206,9 @@ def main() -> None:
             encoding="utf-8",
         )
         print(f"JSON report: {args.json}")
+        audit_target = report.target_url or scanned_url
+        if audit_target:
+            post_ingest_audit(audit_target, counts, risk, critical)
 
     critical = sum(1 for f in report.findings if f.severity == "critical")
     if critical:
